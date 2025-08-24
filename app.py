@@ -38,22 +38,8 @@ _embed_client: Optional[InferenceClient] = None
 def _get_embed_client() -> InferenceClient:
     global _embed_client
     if _embed_client is None:
-        mid = HF_EMBED_MODEL.strip()
-
-        # Auto-fix very common bad value like "sentence-transformers/BAAI/bge-m3"
-        if mid.lower().startswith("sentence-transformers/baai/"):
-            mid = mid.split("/", 1)[1]  # -> "BAAI/bge-m3"
-
-        if mid.count("/") != 1:
-            raise ValueError(
-                f"HF_EMBEDDINGS_MODEL must be 'owner/name', got '{mid}'. "
-                "Examples: 'BAAI/bge-m3', 'sentence-transformers/all-MiniLM-L6-v2'."
-            )
-        if not HF_API_TOKEN:
-            raise RuntimeError(
-                "HF_API_TOKEN is not set. Go to Space → Settings → Variables and add HF_API_TOKEN (a WRITE token)."
-            )
-        _embed_client = InferenceClient(model=mid, token=HF_API_TOKEN, repo_type="model")
+        # no repo_type here
+        _embed_client = InferenceClient(model=HF_EMBED_MODEL, token=HF_API_TOKEN)
     return _embed_client
 
 # ------------------
@@ -72,11 +58,14 @@ def _normalize(v: np.ndarray) -> np.ndarray:
     return v / n
 
 def _embed_query(text: str) -> np.ndarray:
-    vec = _get_embed_client().feature_extraction(text)
+    client = _get_embed_client()
+    vec = client.feature_extraction(text)   # returns list or [list]
     v = np.asarray(vec, dtype=np.float32)
     if v.ndim == 2:
         v = v[0]
-    return _normalize(v)
+    # normalize if you use IP/cosine in FAISS
+    v = v / (np.linalg.norm(v) + 1e-12)
+    return v
 
 # ------------------
 # Index storage
