@@ -1,147 +1,156 @@
-import os, time
+import os
+import gradio as gr
+from gradio import update as gr_update  # tiny alias
+from copy import deepcopy
 from dotenv import load_dotenv
 
-# Load environment variables BEFORE importing rag modules
 load_dotenv(override=True)
 
-import gradio as gr
-from rag.retrieval import search, embed
-from rag.synth import synth_answer_stream, render_sources
-from helpers import linkify_text_with_sources
-
-missing = []
-if not os.getenv("HF_API_TOKEN"): missing.append("HF_API_TOKEN (embeddings)")
-if not os.getenv("LLM_MODEL"):    print("[INFO] LLM_MODEL not set, using default", flush=True)
-print("[ENV] Missing:", ", ".join(missing) or "None", flush=True)
-# HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-
-# def sanity():
-#     ok = bool(os.getenv("HF_API_TOKEN"))
-#     v = embed("hello world")
-#     return f"Token set? {ok}\nEmbedding dim: {len(v)}"
-
-# def rag_chat(user_question, openai_key):
-#     if not openai_key:
-#         return "❌ Please provide your OpenAI API key."
-
-#     # Inject the key into environment so synth can use it
-#     os.environ["OPENAI_API_KEY"] = openai_key
-
-#     # Step 1: Retrieve top passages
-#     hits = search(user_question, top_k=8)
-
-#     if not hits:
-#         return "❌ Sorry, no relevant information found."
-
-    # # Step 2: Generate synthesized answer
-    # try:
-    #     final_answer = synth_answer(user_question, hits[:5])
-    #     final_answer = linkify(final_answer, hits[:5])
-    #     final_answer += "\n\n---\n" + render_sources(hits[:5])
-    # except Exception as e:
-    #     final_answer = f"❌ Error during synthesis: {e}"
-
-    # return final_answer
-# def rag_chat(user_question, openai_key):
-#     if not openai_key:
-#         yield "❌ Please provide your OpenAI API key."
-#         return
-
-#     os.environ["OPENAI_API_KEY"] = openai_key
-
-#     hits = search(user_question, top_k=8)
-#     if not hits:
-#         yield "❌ Sorry, no relevant information found."
-#         return
-
-#     acc = ""
-#     try:
-#         for piece in synth_answer_stream(user_question, hits[:5]):
-#             acc += piece or ""
-#             # stream raw text while typing (no links yet to avoid jumpiness)
-#             yield acc
-#     except Exception as e:
-#         partial = acc if acc.strip() else ""
-#         yield (partial + ("\n\n" if partial else "") + f"❌ Streaming error: {e}")
-#         return
-
-#     final_md = linkify_text_with_sources(acc, hits[:5])
-#     yield final_md
+from rag.retrieval import search, ensure_ready
+from rag.synth import synth_answer_stream
+from helpers import _extract_cited_indices, linkify_text_with_sources, _group_sources_md
 
 
+# ---------- Warm-Up ----------
 
-# with gr.Blocks() as demo:
-#     gr.Markdown("## 🤖 HR Assistant (RAG)\nAsk your question below:")
-
-#     with gr.Row():
-#         api_key = gr.Textbox(label="🔑 Your OpenAI API Key", type="password")
-    
-#     question = gr.Textbox(label="❓ Your Question", placeholder="e.g., Quels sont les droits à congés ?")
-    
-#     answer = gr.Markdown(label="💡 Assistant Answer")
-
-#     submit_btn = gr.Button("Ask")
-
-#     submit_btn.click(fn=rag_chat, inputs=[question, api_key], outputs=answer)
+def _warmup():
+    try:
+        ensure_ready()
+        return "✅ Modèles initialisés !"
+    except Exception as e:
+        return f"⚠️ Warmup a échoué : {e}"
 
 
-# if __name__ == "__main__":
-#     demo.launch()
+# ---------- Chat step 1: add user message ----------
+def add_user(user_msg: str, history: list[tuple]) -> tuple[str, list[tuple]]:
+    user_msg = (user_msg or "").strip()
+    if not user_msg:
+        return "", history
+    # append a placeholder assistant turn for streaming
+    history = history + [(user_msg, "")]
+    return "", history
 
 
-def rag_chat(user_question: str, openai_key: str):
-    """Generator: streams draft text to a Textbox, then yields final Markdown."""
-    if not openai_key:
-        yield "❌ Please provide your OpenAI API key.", None
+# ---------- Chat step 2: stream assistant answer ----------
+def bot(history: list[tuple], api_key: str, top_k: int):
+    """
+    Yields (history, sources_markdown) while streaming.
+    """
+    if not history:
+        yield history, "### Sources\n_(none)_"
         return
 
-    os.environ["OPENAI_API_KEY"] = openai_key.strip()
+    if api_key:
+        os.environ["OPENAI_API_KEY"] = api_key.strip()
 
-    # Step 1: retrieve
-    yield "⏳ Recherche des passages pertinents…", None
-    hits = search(user_question, top_k=8)
-    if not hits:
-        yield "❌ Sorry, no relevant information found.", None
+    user_msg, _ = history[-1]
+
+    # Retrieval
+    k = int(max(top_k, 1))
+    try:
+        hits = search(user_msg, top_k=k)
+    except Exception as e:
+        history[-1] = (user_msg, f"❌ Retrieval error: {e}")
+        yield history, "### Sources\n_(none)_"
         return
 
-    # Step 2: stream LLM synthesis
+    sources_md = sources_markdown(hits[:k])
+
+    # show a small “thinking” placeholder immediately
+    history[-1] = (user_msg, "⏳ Synthèse en cours…")
+    yield history, "### 📚 Sources"
+
+    # Streaming LLM
     acc = ""
     try:
-        for piece in synth_answer_stream(user_question, hits[:5]):
-            acc += piece or ""
-            # Stream into the draft textbox; keep markdown empty during typing
-            yield acc, None
+        for chunk in synth_answer_stream(user_msg, hits[:k]):
+            acc += chunk or ""
+            step_hist = deepcopy(history)
+            step_hist[-1] = (user_msg, acc)
+            yield step_hist, "### 📚 Sources"
     except Exception as e:
-        yield f"❌ Error during synthesis: {e}", None
+        history[-1] = (user_msg, f"❌ Synthèse: {e}")
+        yield history, sources_md
         return
 
-    # Step 3: finalize + linkify citations in Markdown block
-    md = linkify_text_with_sources(acc, hits[:5])
-    yield acc, md
+    # Finalize + linkify citations
+    acc_linked = linkify_text_with_sources(acc, hits[:k])
+    history[-1] = (user_msg, acc_linked)
+    
+    # Construit la section sources à partir des citations réelles [n]
+    used = _extract_cited_indices(acc_linked, k)
+    grouped_sources = _group_sources_md(hits[:k], used)
 
-with gr.Blocks() as demo:
-    gr.Markdown("## 🤖 HR Assistant (RAG)\nAsk your question below:")
+    yield history, grouped_sources
+    # yield history, sources_md
+
+
+# ---------- UI ----------
+with gr.Blocks(theme="soft", fill_height=True) as demo:
+    gr.Markdown("# 🇫🇷 Assistant RH — Chat RAG")
+            # Warmup status (put somewhere visible)
+    status = gr.Markdown("⏳ Initialisation des modèles du RAG…")
+
+    # Sidebar (no 'label' arg)
+    with gr.Sidebar(open=True):
+        gr.Markdown("## ⚙️ Paramètres")
+        api_key = gr.Textbox(
+            label="🔑 OpenAI API Key (BYOK — never stored)",
+            type="password",
+            placeholder="sk-… (optional if set in env)"
+        )
+        topk = gr.Slider(1, 10, value=5, step=1, label="Top-K passages")
+        # you can wire this later; not used now
+        save_history = gr.Checkbox(label="Ajouter un modèle eranker")
 
     with gr.Row():
-        api_key = gr.Textbox(label="🔑 Your OpenAI API Key", type="password", placeholder="sk-…")
-    question = gr.Textbox(label="❓ Your Question", placeholder="e.g., Quels sont les droits à congés ?")
+        with gr.Column(scale=4):
+            chat = gr.Chatbot(
+                label="Chat Interface",
+                height="65vh",
+                show_copy_button=False,
+                avatar_images=(
+                    "https://raw.githubusercontent.com/gradio-app/gradio/main/gradio/icons/huggingface-logo.svg",
+                    "assets/chatbot.png",
+                ),
+                render_markdown=True,
+                show_label=False,
+                placeholder="<p style='text-align: center;'>Bonjour 👋,</p><p style='text-align: center;'>Je suis votre assistant HR. Je me tiens prêt à répondre à vos questions.</p>"
+            )
+            # input row
+            with gr.Row(equal_height=True):
+                msg = gr.Textbox(
+                    placeholder="Posez votre question…",
+                    show_label=False,
+                    scale=5,
+                )
+                send = gr.Button("Envoyer", variant="primary", scale=1)
 
-    # live streaming target
-    draft_answer = gr.Markdown(label="💬 Réponse")
-    # final pretty markdown with clickable links
-    # final_answer = gr.Markdown()
+        with gr.Column(scale=1):
+            sources = gr.Markdown("### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._")
 
-    with gr.Row():
-        submit_btn = gr.Button("Ask", variant="primary")
-        clear_btn = gr.Button("Clear")
+    state = gr.State([])  # chat history: list[tuple(user, assistant)]
 
-    submit_btn.click(
-        fn=rag_chat,
-        inputs=[question, api_key],
-        outputs=[draft_answer, final_answer],
-        show_progress="full",  # shows loader on the button
-    )
-    clear_btn.click(lambda: ("", ""), outputs=[draft_answer, final_answer])
+    # wire events: user submits -> add_user -> bot streams
+    send_click = send.click(add_user, [msg, state], [msg, state])
+    send_click.then(
+        bot,
+        [state, api_key, topk],
+        [chat, sources],
+        show_progress="full",
+    ).then(lambda h: h, chat, state)
+
+    msg_submit = msg.submit(add_user, [msg, state], [msg, state])
+    msg_submit.then(
+        bot,
+        [state, api_key, topk],
+        [chat, sources],
+        show_progress="full",
+    ).then(lambda h: h, chat, state)
+
+
+    demo.load(_warmup, inputs=None, outputs=status)
+
 
 if __name__ == "__main__":
     demo.queue().launch()

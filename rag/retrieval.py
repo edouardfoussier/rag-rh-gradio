@@ -1,6 +1,6 @@
-import os, threading, ast
+# retrieval.py
+import os, ast, threading
 from typing import List, Dict, Any, Optional, Tuple
-
 import numpy as np
 from datasets import load_dataset
 from huggingface_hub import InferenceClient
@@ -13,7 +13,6 @@ DATASETS = [
 HF_EMBED_MODEL = os.getenv("HF_EMBEDDINGS_MODEL", "BAAI/bge-m3")
 HF_API_TOKEN  = os.getenv("HF_API_TOKEN")
 
-# Try FAISS; fallback to NumPy if import fails
 _USE_FAISS = True
 try:
     import faiss  # type: ignore
@@ -21,8 +20,8 @@ except Exception:
     _USE_FAISS = False
 
 _embed_client: Optional[InferenceClient] = None
-_index = None           # faiss index or np.ndarray
-_payloads = None        # list[dict]
+_index = None
+_payloads = None
 _lock = threading.Lock()
 
 def _client() -> InferenceClient:
@@ -61,15 +60,28 @@ def _load_corpus() -> Tuple[np.ndarray, List[Dict[str, Any]]]:
     X = np.stack(vecs, axis=0)
     return X, payloads
 
+CACHE = "/tmp/rag_index.npz"
+
+def _faiss_from_X(X):
+    import faiss
+    idx = faiss.IndexFlatIP(X.shape[1]); idx.add(X); return idx
+
 def _build_index():
+    # try cached index
+    if os.path.exists(CACHE):
+        try:
+            d = np.load(CACHE, allow_pickle=True)
+            X = d["X"]
+            payloads = d["payloads"].tolist()
+            return (_faiss_from_X(X) if _USE_FAISS else X), payloads
+        except Exception:
+            # cache corrupted → rebuild
+            try: os.remove(CACHE)
+            except: pass
+    # build fresh
     X, payloads = _load_corpus()
-    if _USE_FAISS:
-        dim = X.shape[1]
-        idx = faiss.IndexFlatIP(dim)
-        idx.add(X)
-        return idx, payloads
-    else:
-        return X, payloads  # NumPy fallback
+    np.savez_compressed(CACHE, X=X, payloads=np.array(payloads, dtype=object))
+    return (_faiss_from_X(X) if _USE_FAISS else X), payloads
 
 def _ensure():
     global _index, _payloads
@@ -80,23 +92,10 @@ def _ensure():
 
 def _search_numpy(X: np.ndarray, q: np.ndarray, k: int):
     scores = X @ q
-    k = min(k, len(scores))
+    k = max(1, min(k, len(scores)))
     part = np.argpartition(-scores, k-1)[:k]
     order = part[np.argsort(-scores[part])]
     return scores[order], order
-
-def rerank_cosine(query_vec, hits, top_k=5):
-    # Re-embed candidate texts and compare? (expensive)
-    # or use retrieval scores only (already cosine). If using NumPy fallback,
-    # you can keep as is. For a tiny boost, score by length-normalized match:
-    scored = []
-    for h in hits:
-        txt = (h["payload"].get("text") or "")
-        # penalize super-long chunks a bit
-        penalty = 1.0 / (1.0 + len(txt)/1500.0)
-        scored.append((h["score"] * penalty, h))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [h for _, h in scored[:top_k]]
 
 def search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     _ensure()
@@ -113,3 +112,18 @@ def search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         hits.append({"score": float(s), "payload": p})
     return hits
 
+# ---------- explicit warm-up helpers ----------
+def warm_up_sync():
+    try:
+        _ = search("warmup", top_k=3)
+    except Exception:
+        pass
+
+def warm_up_async():
+    t = threading.Thread(target=warm_up_sync, daemon=True)
+    t.start()
+
+def ensure_ready():
+    """Build the index once and warm the embedding endpoint."""
+    _ensure()          # builds FAISS/NumPy index + loads payloads
+    _ = embed("warmup")  # hits HF Inference API once to avoid cold-start
