@@ -8,3 +8,11 @@ __pycache__/
 *.pyz
 *.pywz
 *.pyzw
+
+# build / caches
+/tmp/
+*.npz
+*.npy
+
+# os junk
+.DS_Store
