@@ -94,6 +94,24 @@ def _group_sources_md(passages: list[dict], used_idxs: list[int]) -> str:
             lines.append(f"{i}. {title}{suffix}")
     return "\n".join(lines)
 
+# Sanity Check
+def stats():
+    """Return quick information about the index and payloads."""
+    _ensure()
+    if _USE_FAISS:
+        n = _index.ntotal
+        dim = _index.d
+    else:
+        n = _index.shape[0]
+        dim = _index.shape[1]
+    return {
+        "backend": "faiss" if _USE_FAISS else "numpy",
+        "vectors": n,
+        "dim": dim,
+        "payloads": len(_payloads) if _payloads is not None else 0,
+        "datasets": [f"{name}:{split}" for name, split in DATASETS],
+    }
+
 # def sources_markdown(passages: list[dict]) -> str:
 #     if not passages:
 #         return "### Sources\n_(aucune)_"

@@ -5,6 +5,7 @@ import numpy as np
 from datasets import load_dataset
 from huggingface_hub import InferenceClient
 
+
 EMBED_COL = os.getenv("EMBED_COL", "embeddings_bge-m3")
 DATASETS = [
     ("edouardfoussier/travail-emploi-clean", "train"),
@@ -127,3 +128,4 @@ def ensure_ready():
     """Build the index once and warm the embedding endpoint."""
     _ensure()          # builds FAISS/NumPy index + loads payloads
     _ = embed("warmup")  # hits HF Inference API once to avoid cold-start
+    

@@ -111,7 +111,6 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
         )
         topk = gr.Slider(1, 10, value=5, step=1, label="Top-K passages")
         # you can wire this later; not used now
-        save_history = gr.Checkbox(label="Ajouter un modèle eranker")
 
     with gr.Row():
         with gr.Column(scale=4):
