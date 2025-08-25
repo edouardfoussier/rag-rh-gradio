@@ -10,7 +10,7 @@ def is_unknown_answer(txt: str) -> bool:
     patterns = [
         "Je suis navré, je n'ai pas trouvé la réponse",
         "Je ne sais pas",
-        "Je ne comprends pas la question"
+        "Je ne comprends pas"
         "Pourriez-vous reformuler",
         "je n'ai pas trouvé d'information pertinente",
     ]

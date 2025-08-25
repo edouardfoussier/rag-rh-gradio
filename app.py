@@ -8,7 +8,7 @@ load_dotenv(override=True)
 
 from rag.retrieval import search, ensure_ready
 from rag.synth import synth_answer_stream
-from helpers import _extract_cited_indices, linkify_text_with_sources, _group_sources_md
+from helpers import _extract_cited_indices, linkify_text_with_sources, _group_sources_md, is_unknown_answer
 
 
 # ---------- Warm-Up ----------
@@ -37,7 +37,7 @@ def bot(history: list[tuple], api_key: str, top_k: int):
     Yields (history, sources_markdown) while streaming.
     """
     if not history:
-        yield history, "### Sources\n_(none)_"
+        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
         return
 
     if api_key:
@@ -51,14 +51,14 @@ def bot(history: list[tuple], api_key: str, top_k: int):
         hits = search(user_msg, top_k=k)
     except Exception as e:
         history[-1] = (user_msg, f"❌ Retrieval error: {e}")
-        yield history, "### Sources\n_(none)_"
+        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
         return
 
     sources_md = sources_markdown(hits[:k])
 
     # show a small “thinking” placeholder immediately
     history[-1] = (user_msg, "⏳ Synthèse en cours…")
-    yield history, "### 📚 Sources"
+    yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
 
     # Streaming LLM
     acc = ""
@@ -67,21 +67,31 @@ def bot(history: list[tuple], api_key: str, top_k: int):
             acc += chunk or ""
             step_hist = deepcopy(history)
             step_hist[-1] = (user_msg, acc)
-            yield step_hist, "### 📚 Sources"
+            yield step_hist, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
     except Exception as e:
         history[-1] = (user_msg, f"❌ Synthèse: {e}")
-        yield history, sources_md
+        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
         return
 
     # Finalize + linkify citations
     acc_linked = linkify_text_with_sources(acc, hits[:k])
     history[-1] = (user_msg, acc_linked)
     
+    # Decide whether to show sources
+    if is_unknown_answer(acc_linked):
+        # No sources for unknown / reformulate
+        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+        return
+    
     # Construit la section sources à partir des citations réelles [n]
     used = _extract_cited_indices(acc_linked, k)
+    if not used:
+        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+        return
+    
     grouped_sources = _group_sources_md(hits[:k], used)
 
-    yield history, grouped_sources
+    yield history, gr_update(visible=True, value=grouped_sources)
     # yield history, sources_md
 
 
@@ -137,7 +147,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
         bot,
         [state, api_key, topk],
         [chat, sources],
-        show_progress="full",
+        show_progress="minimal",
     ).then(lambda h: h, chat, state)
 
     msg_submit = msg.submit(add_user, [msg, state], [msg, state])
@@ -145,7 +155,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
         bot,
         [state, api_key, topk],
         [chat, sources],
-        show_progress="full",
+        show_progress="minimal",
     ).then(lambda h: h, chat, state)
 
 
