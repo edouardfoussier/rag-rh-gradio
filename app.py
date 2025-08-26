@@ -97,7 +97,7 @@ def bot(history: list[tuple], api_key: str, top_k: int):
 
 # ---------- UI ----------
 with gr.Blocks(theme="soft", fill_height=True) as demo:
-    gr.Markdown("# 🇫🇷 Assistant RH — Chat RAG")
+    gr.Markdown("# 🇫🇷 Assistant RH — RAG Chatbot")
             # Warmup status (put somewhere visible)
     status = gr.Markdown("⏳ Initialisation des modèles du RAG…")
 
