@@ -9,18 +9,18 @@ app_file: app.py
 pinned: true
 short_description: 👉 RAG-powered AI assistant for French Human Resources
 tags:
-  - gradio
-  - rag
-  - faiss
-  - openai
-  - hr
-  - human-resources
-  - law
-  - france
-  - french
-  - chatbot
+- gradio
+- rag
+- faiss
+- openai
+- hr
+- human-resources
+- law
+- france
+- french
+- chatbot
 thumbnail: >-
-  https://cdn-uploads.huggingface.co/production/uploads/6668057ef7604601278857f5/C09f58bGfLq9wHfLpsZyP.png
+  https://cdn-uploads.huggingface.co/production/uploads/6668057ef7604601278857f5/JeivLn409aMRCqx6RwO2J.png
 ---
 
 # 🇫🇷 RAG-powered HR Assistant
@@ -29,7 +29,7 @@ thumbnail: >-
 
 [![Hugging Face Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-blue)](https://huggingface.co/spaces/edouardfoussier/rag-rh-assistant)
 
-![App Screenshot](assets/screenshot.png)
+![App Screenshot](assets/screenshot2.png)
 
 ---
 
