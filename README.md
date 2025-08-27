@@ -1,8 +1,8 @@
 # 🇫🇷 RAG-powered HR Assistant
 
-👉 **An AI assistant specialised in French Human Resources, powered by Retrieval-Augmented Generation (RAG) and based on official public datasets.**  
+👉 **This project demonstrates how Retrieval-Augmented Generation (RAG) can be applied to official HR/legal datasets from French administrations to build a practical AI assistant.**  
 
-[![Hugging Face Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-blue)](https://huggingface.co/spaces/edouardfoussier/rag-rh-assistant)
+👉 **You can test the live project on Hugging Face**: [![Hugging Face Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-blue)](https://huggingface.co/spaces/edouardfoussier/rag-rh-assistant)
 
 ![App Screenshot](assets/screenshot2.png)
 
