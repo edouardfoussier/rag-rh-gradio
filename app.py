@@ -32,7 +32,7 @@ def add_user(user_msg: str, history: list[tuple]) -> tuple[str, list[tuple]]:
 
 
 # ---------- Chat step 2: stream assistant answer ----------
-def bot(history: list[tuple], api_key: str, top_k: int):
+def bot(history: list[tuple], api_key: str, top_k: int, model_name: str):
     """
     Yields (history, sources_markdown) while streaming.
     """
@@ -63,7 +63,7 @@ def bot(history: list[tuple], api_key: str, top_k: int):
     # Streaming LLM
     acc = ""
     try:
-        for chunk in synth_answer_stream(user_msg, hits[:k]):
+        for chunk in synth_answer_stream(user_msg, hits[:k], model=model_name):
             acc += chunk or ""
             step_hist = deepcopy(history)
             step_hist[-1] = (user_msg, acc)
@@ -109,6 +109,17 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
             type="password",
             placeholder="sk-… (optional if set in env)"
         )
+        # let user choose the OpenAI model
+        model = gr.Dropdown(
+            label="⚙️ OpenAI model",
+            choices=[
+                "gpt-4o-mini",
+                "gpt-4o",
+                "gpt-4.1-mini",
+                "gpt-3.5-turbo"
+            ],
+            value="gpt-4o-mini"
+        )
         topk = gr.Slider(1, 10, value=5, step=1, label="Top-K passages")
         # you can wire this later; not used now
 
@@ -144,7 +155,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
     send_click = send.click(add_user, [msg, state], [msg, state])
     send_click.then(
         bot,
-        [state, api_key, topk],
+        [state, api_key, topk, model],
         [chat, sources],
         show_progress="minimal",
     ).then(lambda h: h, chat, state)
@@ -152,7 +163,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
     msg_submit = msg.submit(add_user, [msg, state], [msg, state])
     msg_submit.then(
         bot,
-        [state, api_key, topk],
+        [state, api_key, topk, model],
         [chat, sources],
         show_progress="minimal",
     ).then(lambda h: h, chat, state)
