@@ -3,6 +3,26 @@ from collections import OrderedDict
 
 CITATION_RE = re.compile(r"\[(\d+)\]")
 
+def _last_user_and_assistant_idxs(history: list[dict]) -> tuple[int, int]:
+    """
+    Find the last (user, assistant-placeholder) pair in messages history.
+    We expect the last message to be an assistant with empty content.
+    """
+    if not history:
+        raise ValueError("Empty history")
+    a_idx = len(history) - 1
+    if history[a_idx]["role"] != "assistant":
+        # be forgiving: fallback to creating one
+        history.append({"role": "assistant", "content": ""})
+        a_idx = len(history) - 1
+    # find the preceding user message
+    u_idx = a_idx - 1
+    while u_idx >= 0 and history[u_idx]["role"] != "user":
+        u_idx -= 1
+    if u_idx < 0:
+        raise ValueError("No preceding user message found")
+    return u_idx, a_idx
+
 
 def is_unknown_answer(txt: str) -> bool:
     """Detect 'no answer' / 'reformulate' replies."""

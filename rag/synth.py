@@ -54,18 +54,20 @@ def _build_prompt(query, passages):
         "Réponse:"
     )
 
-def synth_answer_stream(query, passages, model: str  | None = None):
+def synth_answer_stream(query, passages, model: str | None = None, temperature: float = 0.2):
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=LLM_BASE_URL)
     model = model or LLM_MODEL
     prompt = utf8_safe(_build_prompt(query, passages))
+    temperature = float(temperature)
 
     stream = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
+        temperature=temperature,
         stream=True,
     )
-
+    # print(f"[synth] payload temperature={temperature}", flush=True)
+    # print(f"[synth] payload model={model}", flush=True)
     for event in stream:
         if not getattr(event, "choices", None):
             continue

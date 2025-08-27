@@ -8,7 +8,7 @@ load_dotenv(override=True)
 
 from rag.retrieval import search, ensure_ready
 from rag.synth import synth_answer_stream
-from helpers import _extract_cited_indices, linkify_text_with_sources, _group_sources_md, is_unknown_answer
+from helpers import _extract_cited_indices, linkify_text_with_sources, _group_sources_md, is_unknown_answer, _last_user_and_assistant_idxs
 
 
 # ---------- Warm-Up ----------
@@ -22,65 +22,83 @@ def _warmup():
 
 
 # ---------- Chat step 1: add user message ----------
-def add_user(user_msg: str, history: list[tuple]) -> tuple[str, list[tuple]]:
+def add_user(user_msg: str, history: list[dict]):
+    """
+    history (messages mode) looks like:
+      [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]
+    We append the user's message, then an empty assistant message to stream into.
+    """
     user_msg = (user_msg or "").strip()
     if not user_msg:
         return "", history
-    # append a placeholder assistant turn for streaming
-    history = history + [(user_msg, "")]
-    return "", history
+
+    new_history = history + [
+        {"role": "user", "content": user_msg},
+        {"role": "assistant", "content": ""},  # placeholder for streaming
+    ]
+    return "", new_history
 
 
 # ---------- Chat step 2: stream assistant answer ----------
-def bot(history: list[tuple], api_key: str, top_k: int, model_name: str):
+def bot(history: list[tuple], api_key: str, top_k: int, model_name: str, temperature: float):
     """
-    Yields (history, sources_markdown) while streaming.
+    Streaming generator for messages-format history.
+    Yields (updated_history, sources_markdown).
     """
+    # Initial sources panel content
+    empty_sources = "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+
     if not history:
-        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+        yield history, empty_sources
         return
 
+    # Inject BYO key if provided
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key.strip()
 
-    user_msg, _ = history[-1]
+    # Identify the pair (user -> assistant placeholder)
+    try:
+        u_idx, a_idx = _last_user_and_assistant_idxs(history)
+    except Exception:
+        yield history, empty_sources
+        return
+    
+    user_msg = history[u_idx]["content"]
 
     # Retrieval
     k = int(max(top_k, 1))
     try:
         hits = search(user_msg, top_k=k)
     except Exception as e:
-        history[-1] = (user_msg, f"❌ Retrieval error: {e}")
-        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+        history[a_idx]["content"] = f"❌ Retrieval error: {e}"
+        yield history, empty_sources
         return
 
-    # sources_md = sources_markdown(hits[:k])
-
-    # show a small “thinking” placeholder immediately
-    history[-1] = (user_msg, "⏳ Synthèse en cours…")
-    yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+    # Show a small “thinking” placeholder immediately
+    history[a_idx]["content"] = "⏳ Synthèse en cours…"
+    yield history, empty_sources
 
     # Streaming LLM
     acc = ""
     try:
-        for chunk in synth_answer_stream(user_msg, hits[:k], model=model_name):
+        for chunk in synth_answer_stream(user_msg, hits[:k], model=model_name, temperature=temperature):
             acc += chunk or ""
-            step_hist = deepcopy(history)
-            step_hist[-1] = (user_msg, acc)
-            yield step_hist, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+            history[a_idx]["content"] = acc
+            # Stream without sources first (or keep a lightweight panel if you prefer)
+            yield history, empty_sources
     except Exception as e:
-        history[-1] = (user_msg, f"❌ Synthèse: {e}")
-        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+        history[a_idx]["content"] = f"❌ Synthèse: {e}"
+        yield history, empty_sources
         return
 
     # Finalize + linkify citations
     acc_linked = linkify_text_with_sources(acc, hits[:k])
-    history[-1] = (user_msg, acc_linked)
+    history[a_idx]["content"] =  acc_linked
     
     # Decide whether to show sources
     if is_unknown_answer(acc_linked):
         # No sources for unknown / reformulate
-        yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
+        yield history, empty_sources
         return
     
     # Construit la section sources à partir des citations réelles [n]
@@ -90,7 +108,6 @@ def bot(history: list[tuple], api_key: str, top_k: int, model_name: str):
         return
     
     grouped_sources = _group_sources_md(hits[:k], used)
-
     yield history, gr_update(visible=True, value=grouped_sources)
     # yield history, sources_md
 
@@ -113,16 +130,24 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
         model = gr.Dropdown(
             label="⚙️ OpenAI model",
             choices=[
+                "gpt-5",
+                "gpt-5-mini",
+                "gpt-5-nano",
                 "gpt-4o-mini",
                 "gpt-4o",
                 "gpt-4.1-mini",
-                "gpt-3.5-turbo"
+                "gpt-3.5-turbo",
             ],
             value="gpt-4o-mini"
         )
         topk = gr.Slider(1, 10, value=5, step=1, label="Top-K passages")
-        # you can wire this later; not used now
-
+        temperature = gr.Slider(
+            minimum=0.0,
+            maximum=1.0,
+            value=0.2,  # valeur par défaut
+            step=0.1,
+            label="Température du modèle"
+        )
     with gr.Row():
         with gr.Column(scale=4):
             chat = gr.Chatbot(
@@ -135,6 +160,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
                 ),
                 render_markdown=True,
                 show_label=False,
+                type="messages",
                 placeholder="<p style='text-align: center;'>Bonjour 👋,</p><p style='text-align: center;'>Je suis votre assistant HR. Je me tiens prêt à répondre à vos questions.</p>"
             )
             # input row
@@ -155,7 +181,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
     send_click = send.click(add_user, [msg, state], [msg, state])
     send_click.then(
         bot,
-        [state, api_key, topk, model],
+        [state, api_key, topk, model, temperature],
         [chat, sources],
         show_progress="minimal",
     ).then(lambda h: h, chat, state)
@@ -163,7 +189,7 @@ with gr.Blocks(theme="soft", fill_height=True) as demo:
     msg_submit = msg.submit(add_user, [msg, state], [msg, state])
     msg_submit.then(
         bot,
-        [state, api_key, topk, model],
+        [state, api_key, topk, model, temperature],
         [chat, sources],
         show_progress="minimal",
     ).then(lambda h: h, chat, state)
