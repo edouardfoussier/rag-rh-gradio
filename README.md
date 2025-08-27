@@ -1,28 +1,3 @@
----
-license: mit
-title: 🇫🇷 Assistant RH — RAG Chatbot
-sdk: gradio
-emoji: 📚
-colorFrom: indigo
-colorTo: purple
-app_file: app.py
-pinned: true
-short_description: 👉 RAG-powered AI assistant for French Human Resources
-tags:
-- gradio
-- rag
-- faiss
-- openai
-- hr
-- human-resources
-- law
-- france
-- french
-- chatbot
-thumbnail: >-
-  https://cdn-uploads.huggingface.co/production/uploads/6668057ef7604601278857f5/JeivLn409aMRCqx6RwO2J.png
----
-
 # 🇫🇷 RAG-powered HR Assistant
 
 👉 **An AI assistant specialised in French Human Resources, powered by Retrieval-Augmented Generation (RAG) and based on official public datasets.**  
