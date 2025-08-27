@@ -54,7 +54,7 @@ def bot(history: list[tuple], api_key: str, top_k: int):
         yield history, "### 📚 Sources\n_Ici, vous pourrez consulter les sources utilisées pour formuler la réponse._"
         return
 
-    sources_md = sources_markdown(hits[:k])
+    # sources_md = sources_markdown(hits[:k])
 
     # show a small “thinking” placeholder immediately
     history[-1] = (user_msg, "⏳ Synthèse en cours…")
